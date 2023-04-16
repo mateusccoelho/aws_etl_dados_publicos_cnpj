@@ -1,3 +1,7 @@
+*.zip
+env_check/
+env_fetch/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
