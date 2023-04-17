@@ -13,6 +13,23 @@ Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](ht
 - Ter uma conta AWS. Acho que todos os serviços deste projeto se enquadram no [nível gratuito](https://aws.amazon.com/pt/free/?nc2=h_ql_pr_ft&all-free-tier.sort-by=item.additionalFields.SortRank&all-free-tier.sort-order=asc&awsf.Free%20Tier%20Types=*all&awsf.Free%20Tier%20Categories=*all) para contas novas. Porém, se sua conta já for antiga, a boa notícia é que precisei gastar menos de US$ 0,20 para fazer os testes. O resposável pelo maior custo foi o Crawler do Data Catalog.
 - Conhecimentos básicos de AWS e do console.
 - Ter o Python 3.9 instalado na sua máquina.
+- Ter conhecimentos básicos de engenharia de dados.
+
+## Serviços de dados e analytics na AWS
+
+Antes de entrar em detalhes de cada serviço, vale a pena explicar como funciona a integração entre os serviços de dados e analytics da AWS.
+
+![](references/aws_data_services_integration.png)
+
+Na AWS cada serviço cuida de uma parte da implantação de um *datalake*. Assim, há uma divisão clara entre os serviços que armazenam, catalogam e consumem dados.
+
+Na base do diagrama temos os serviços de armazenamento, como Amazon S3 e Amazon RDS. É neles onde os dados efetivamente moram. Repare que cada serviço tem suas especificidades, podendo guardar ou não metadados de dados estruturados, semi-estruturados ou não estruturados.
+
+Em seguida, temos o AWS Glue Data Catalog, cujo objetivo é catalogar os metadados de várias fontes de informação em um local único e de forma padronizada. Para isso utilizamos Crawlers que examinam as fontes de dados para catalogar tabelas, particionamentos, tipos de dados, formatos de arquivo, etc. 
+
+Por último existem os serviços de consumo, como EMR (cluster hadoop), Redshift e Athena. 
+
+Neste projeto trabalhei apenas nas duas primeiras camadas. Primeiro construimos as ferramentas para guardar os dados em um bucket S3. Depois utilizaremos um crawler para catalogar os metadados da tabela Empresas em um database do Data Catalog da nossa conta.
 
 ## Desenho da solução
 
@@ -30,6 +47,38 @@ A solução é baseada em uma máquina de estados para orquestrar as chamadas do
 ## Implementação
 
 Utilizei a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante.
+
+### S3
+
+Será necessário um bucket S3 cuja estrutura será dada pelo diagrama abaixo.
+
+```
+.
+└── cnpj-procet/
+    └── cnpj_db/
+        └── empresas/
+            ├── ref_date=20230416/
+            │   ├── file1
+            │   ├── file2
+            │   ├── ...
+            │   └── fileN
+            └── ref_date=20230516/
+                ├── file1
+                ├── file2
+                ├── ...
+                └── fileN
+```
+
+Note que usamos "pastas" para representar e separar databases, tabelas e partições. A princípio nenhuma pasta precisa ser criada pois isso será feito automaticamente pela Lambda `fetch_data`.
+
+### AWS Glue
+
+No Glue será necessário criar um database e um Crawler. A criação do database é super simples pelo console, bastando apenas passar um nome. Na criação do Crawler preste atenção nas seguinte configurações:
+
+- Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db/empresas/`. Ou seja, ele servirá apenas para varrer a tabela empresas.
+- Nas configurações de saída use o database criado anteriomente.
+- Use a IAM Role criada anteriormente `CNPJCrawlerRole`.
+- No agendamento do Crawler selecionar sob-demanda.
 
 ### Lambdas
 
@@ -139,6 +188,10 @@ Conforme descrito acima, o *deployment package* desta função deve ser constru�
 - Limite de memória RAM: 3008 MB.
 - Limite de armazenamento efêmero: 2048 MB.
 - Timeout: 8 min.
+
+### Máquina de estados
+
+...
 
 ### IAM Roles
 

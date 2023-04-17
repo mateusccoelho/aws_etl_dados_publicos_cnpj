@@ -1,3 +1,5 @@
+*.bkp
+*.dtmp
 *.zip
 env_check/
 env_fetch/
