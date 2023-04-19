@@ -6,7 +6,7 @@
         "Type": "Task",
         "Resource": "arn:aws:states:::lambda:invoke",
         "Parameters": {
-          "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:check-update-cnpj:$LATEST"
+          "FunctionName": "||arn da função check_update||"
         },
         "Retry": [
           {
@@ -30,7 +30,7 @@
         "Type": "Task",
         "Next": "CheckIfTableExists",
         "Parameters": {
-          "DatabaseName": "cnpj"
+          "DatabaseName": "||nome do database||"
         },
         "Resource": "arn:aws:states:::aws-sdk:glue:getTables",
         "ResultPath": "$.Tables"
@@ -51,7 +51,7 @@
       "GetTableLastPartition": {
         "Type": "Task",
         "Parameters": {
-          "DatabaseName": "cnpj",
+          "DatabaseName": "||nome do database||",
           "TableName": "empresas"
         },
         "Resource": "arn:aws:states:::aws-sdk:glue:getPartitions",
@@ -66,7 +66,7 @@
         "Resource": "arn:aws:states:::lambda:invoke",
         "Parameters": {
           "Payload.$": "$",
-          "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:downloadCNPJTest:$LATEST"
+          "FunctionName": "||arn do lambda download_test||"
         },
         "Retry": [
           {
@@ -172,7 +172,7 @@
               "Resource": "arn:aws:states:::lambda:invoke",
               "Parameters": {
                 "Payload.$": "$",
-                "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:fetch_cnpj_data:$LATEST"
+                "FunctionName": "||arn do lambda fetch_data||"
               },
               "End": true
             }
@@ -186,7 +186,7 @@
         "Type": "Task",
         "End": true,
         "Parameters": {
-          "Name": "CrawlerEmpresas"
+          "Name": "||nome do crawler||"
         },
         "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler"
       }

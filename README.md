@@ -25,7 +25,7 @@ Na AWS cada serviço cuida de uma parte da implantação de um *datalake*. Assim
 
 Na base do diagrama temos os serviços de armazenamento, como Amazon S3 e Amazon RDS. É neles onde os dados efetivamente moram. Repare que cada serviço tem suas especificidades, podendo guardar ou não metadados de dados estruturados, semi-estruturados ou não estruturados.
 
-Em seguida, temos o AWS Glue Data Catalog, cujo objetivo é catalogar os metadados de várias fontes de informação em um local único e de forma padronizada. Para isso utilizamos Crawlers que examinam as fontes de dados para catalogar tabelas, particionamentos, tipos de dados, formatos de arquivo, etc. 
+Em seguida, temos o AWS Glue Data Catalog, cujo objetivo é catalogar os metadados de várias fontes de informação em um local único e de forma padronizada. Para isso utilizamos Crawlers, que examinam as fontes de dados e catalogam tabelas, particionamentos, tipos de dados, formatos de arquivo, etc. 
 
 Por último existem os serviços de consumo, como EMR (cluster hadoop), Redshift e Athena. 
 
@@ -191,7 +191,26 @@ Conforme descrito acima, o *deployment package* desta função deve ser constru�
 
 ### Máquina de estados
 
-...
+AWS Step Funcitions é um serviço da AWS para orquestrar chamadas de API em formato de uma máquina de estados. Podemos representar tal máquina como um grafo, conforme mostrado na seção desenho da solução ![desenho da solução](#desenho-da-solução). Os nós representam estados (*states*), que podem ser chamadas de API ou tipos especiais de estado, como o *Choice* ou o *Map*. As arestas indicam como será o fluxo de execução da máquina.
+
+Cada estado recebe e retorna um documento JSON, o qual pode ser tratado de algumas formas. A figura abaixo (retirada da documentação oficial) mostra como flui a informação dentro de um estado.
+
+![](https://docs.aws.amazon.com/images/step-functions/latest/dg/images/input-output-processing.png)
+
+Cada etapa intermediária na caixa verde representa um filtro ou tratamento que pode ser feito no *input* e *output* do estado. No caso deste projeto, o *input* de alguns estados dependem das informações extraídas nos estados anteriores. Por exemplo, os estados *choice* utilizam o *input* para definir regras que controlam o fluxo de exeução. Assim, essa funcionalidade é essencial para configurarmos como os JSON serão passados adiante e como será a execução de cada estado.
+
+![](references/choice_state.png)
+
+Usaremos 4 tipos de estados:
+
+- Invocação de lambdas.
+- Chamadas de API do AWS Glue para obter listas de tabelas e partições e disparar um Crawler.
+- *Choice state* para direcionar o fluxo da máquina de estados quando a tabela não existe ou a partição nova ainda não foi ingerida no S3.
+- *Map state* para rodar em paralelo a extração dos 10 arquivos da tabela Empresas.
+
+A máquina de estados pode ser configurada de maneira visual pelo Workflow Studio ou em formato de texto usando a linguagem Amazon States Language (ASL). Ela é baseada em JSON e é fácil de entender. Entretanto, neste projeto eu usei o Studio e extraí o código ASL resultante, o qual está na pasta `state_machine`. Isso deixou a minha vida muito fácil porque usar o Studio economiza muitas consultas à documentação oficial. 
+
+Para usar o código aqui disponibilizado será necessário substituir os valores cercados por `||` pelo ARN ou nome do recurso correspondente (removendo os `||` também). Na criação da máquina no console basta selecionar a opção de criar a partir de código. Além disso, selecione o tipo "standard" de máquinas de estados.
 
 ### IAM Roles
 
@@ -199,4 +218,5 @@ Conforme descrito acima, o *deployment package* desta função deve ser constru�
 
 ## Referências
 
+- https://docs.aws.amazon.com/step-functions/latest/dg/concepts-input-output-filtering.html
 - https://github.com/aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ
