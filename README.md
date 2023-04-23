@@ -319,6 +319,44 @@ Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem 
 }
 ```
 
+Após a configuração você já pode executar o ETL! Se tudo foi configurado corretamente até aqui, na primeira execução a tabela será criada e o fluxo será o da imagem abaixo:
+
+![](references/1exec.png)
+
+Nas próximas execuções, se não houver novos dados para ingerir, o fluxo será o da imagem abaixo:
+
+![](references/2exec.png)
+
+### EventBridge Scheduler
+
+A criação do agendamento é bem fácil. Vá até o console e entre em Amazon EventBridge > Scheduler > Schedules > Create Schedule. Alguns pontos para se atentar:
+
+- Selecionar um agendamento recorrente com disparo a cada 7 dias.
+- Não é necessário definir uma janela de tempo flexível.
+- No target selecione "StartExecution" do serviço AWS Step Functions.
+- Selecione a máquina de estados criada anteriormente. Não é necessário passar um input.
+- Não é necessária política de *retry*. 
+- Deixe que o console crie uma *role* para o scheduler, mas redefina o seu nome para `CNPJSchedulerRole`.
+
+A *role* terá o seguinte formato:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "states:StartExecution"
+            ],
+            "Resource": [
+                "arn:aws:states:regiao:numero_da_conta:stateMachine:nome_da_maquina"
+            ]
+        }
+    ]
+}
+```
+
 ## Próximos passos
 
 - Criar um template CloudFormation para instanciar os recursos automaticamente.
