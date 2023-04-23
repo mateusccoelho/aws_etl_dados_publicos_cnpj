@@ -26,6 +26,7 @@ def lambda_handler(event, context):
 
     url = event['url']
     table_name = event['table_name']
+    bucket_name = event['bucket_name']
 
     zip_filename = os.path.basename(url)
     zip_file_path = f'/tmp/{zip_filename}'
@@ -52,12 +53,13 @@ def lambda_handler(event, context):
     s3 = boto3.client('s3')
     partition_value = event['date']
     file_key = f'cnpj_db/{table_name}/ref_date={partition_value}/{orig_file_name}.parquet'
-    s3.upload_file(parquet_file_path, 'cnpj-project', file_key)
+    s3.upload_file(parquet_file_path, bucket_name, file_key)
 
 if(__name__ == '__main__'):
     lambda_handler({
         'url':'https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip', 
         'table_name':'empresas',
-        'date': '20230409'
+        'date': '20230409',
+        'bucket_name': 'projeto-cnpj'
         }, {}
     )

@@ -295,7 +295,7 @@ Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem 
             "Effect": "Allow",
             "Action": "lambda:InvokeFunction",
             "Resource": [
-                "arn:aws:lambda:regiao:numero_da_sua_conta:function:fetch_cnpj",
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:fetch_data",
                 "arn:aws:lambda:regiao:numero_da_sua_conta:function:check_update",
                 "arn:aws:lambda:regiao:numero_da_sua_conta:function:download_test"
             ]

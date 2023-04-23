@@ -23,7 +23,7 @@
         ],
         "Next": "GetTables",
         "ResultSelector": {
-          "LambdaResult.$": "States.StringToJson($.Payload.body)"
+          "LambdaResult.$": "$.Payload.body"
         }
       },
       "GetTables": {
@@ -106,52 +106,62 @@
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas0.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas1.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas2.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas3.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas5.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas6.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas7.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas8.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             },
             {
               "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas9.zip",
               "table_name": "empresas",
-              "date.$": "$.LambdaResult.ref_date"
+              "date.$": "$.LambdaResult.ref_date",
+              "bucket_name": "||nome_do_bucket||"
             }
           ]
         }
