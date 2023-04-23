@@ -1,6 +1,8 @@
 # ETL com AWS Step Functions - Dados Públicos CNPJ
 
-Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um pipeline de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Em particular, trabalhei com a tabela Empresas. A lista abaixo mostra os serviços da AWS empregados. Uma característica em comum é que são serverless e totalmente gerenciados. Ou seja, só precisei me preocupar com o código, e não com a infraestrutura. 
+Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um *pipeline* de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Em particular, trabalhei com a tabela Empresas. Nas próximas seções mostrarei como implementar o *pipeline*. 
+
+A lista abaixo mostra os serviços da AWS empregados.  
 
 - AWS Lambda: executa funções Python.
 - AWS Step Functions: uma máquina de estados que orquestra os outros serviços AWS utilizados.
@@ -8,11 +10,13 @@ Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](ht
 - AWS Glue Data Catalog: repositório de metadados das tabelas.
 - Amazon EventBridge Scheduler: ferramenta para agendar a execução da máquina de estados.
 
+Uma característica em comum é que são serverless e totalmente gerenciados. Ou seja, só precisei me preocupar com o código, e não com a infraestrutura.
+
 ## Pré-requisitos
 
-- Ter uma conta AWS. Acho que todos os serviços deste projeto se enquadram no [nível gratuito](https://aws.amazon.com/pt/free/?nc2=h_ql_pr_ft&all-free-tier.sort-by=item.additionalFields.SortRank&all-free-tier.sort-order=asc&awsf.Free%20Tier%20Types=*all&awsf.Free%20Tier%20Categories=*all) para contas novas. Porém, se sua conta já for antiga, a boa notícia é que precisei gastar menos de US$ 0,20 para fazer os testes. O resposável pelo maior custo foi o Crawler do Data Catalog.
+- Ter uma conta AWS. Todos os serviços deste tutorial se enquadram no [nível gratuito](https://aws.amazon.com/pt/free/?nc2=h_ql_pr_ft&all-free-tier.sort-by=item.additionalFields.SortRank&all-free-tier.sort-order=asc&awsf.Free%20Tier%20Types=*all&awsf.Free%20Tier%20Categories=*all) para contas novas. Porém, se sua conta já for antiga, a boa notícia é que precisei gastar menos de US$ 0,20 para fazer os testes. O resposável pelo maior custo foi o Crawler do Data Catalog.
 - Conhecimentos básicos de AWS e do console.
-- Ter o Python 3.9 instalado na sua máquina.
+- Ter Python 3.9 instalado na sua máquina.
 - Ter conhecimentos básicos de engenharia de dados.
 
 ## Serviços de dados e analytics na AWS
@@ -29,28 +33,28 @@ Em seguida, temos o AWS Glue Data Catalog, cujo objetivo é catalogar os metadad
 
 Por último existem os serviços de consumo, como EMR (cluster hadoop), Redshift e Athena. 
 
-Neste projeto trabalhei apenas nas duas primeiras camadas. Primeiro construimos as ferramentas para guardar os dados em um bucket S3. Depois utilizaremos um crawler para catalogar os metadados da tabela Empresas em um database do Data Catalog da nossa conta.
+Neste projeto trabalharemos apenas nas duas primeiras camadas. Primeiro construiremos as ferramentas para guardar os dados em um bucket S3. Depois utilizaremos um crawler para catalogar os metadados da tabela Empresas em um database do Data Catalog.
 
 ## Desenho da solução
 
 ![](references/stepfunctions_graph.png)
 
-A solução é baseada em uma máquina de estados para orquestrar as chamadas dos lambdas e da API do AWS Glue. Ela será executada semanalmente com o auxílio do Amazon EventBridge. Em linhas gerais, sigo o seguinte fluxo:
+A solução é baseada em uma máquina de estados para orquestrar as chamadas dos lambdas e da API do AWS Glue. Ela será executada semanalmente com o auxílio do Amazon EventBridge. Em linhas gerais, seguiremos o seguinte fluxo:
 
-1. Coleto a data da último atualização da tabela Empresas no site da Receita. 
-2. Coleto a lista de tabelas criadas no database `cnpj` do Data Catalog.
-3. Verifico se a tabela já existe. Se sim, sigo para o próximo passo. Se não, sigo para o passo 5.
-4. Coleto as partições da tabela e rodo uma lambda para verificar se devo ou não ingerir um novo batch na tabela. Se não, o pipeline se encerra aqui. Se sim, sigo para o próximo passo.
-5. Executo 10 vezes em paralelo uma função que irá baixar um dos arquivos da tabela e guardá-la na "pasta" correta do bucket S3.
-6. Finalmente rodo um Crawler do AWS Glue para descobrir a nova partição e agregá-la aos metadados da tabela.
+1. Coletamos a data da último atualização da tabela Empresas no site da Receita. 
+2. Coletamos a lista de tabelas criadas no database `cnpj` do Data Catalog.
+3. Verificamos se a tabela já existe. Se sim, seguimos para o próximo passo. Se não, seguimos para o passo 5.
+4. Coletamos as partições da tabela e rodamos uma lambda para verificar se devemos ingerir um novo batch na tabela. Se não, o pipeline se encerra aqui. Se sim, seguimos para o próximo passo.
+5. Executa-se 10 vezes em paralelo uma função que irá baixar um arquivo de cada vez e guardá-lo na "pasta" correta do bucket S3.
+6. Finalmente rodamos um Crawler do AWS Glue para "descobrir" a nova partição e agregá-la aos metadados da tabela.
 
 ## Implementação
 
-Utilizei a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante.
+Recomendo usar a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante.
 
 ### IAM Roles
 
-Ao longo do tutorial precisaremos definir algumas *roles* para dar a cada recurso AWS os acessos necessários para funcionarem. Tentaremos seguir o princípio de acesso mínimo, em que não concedemos nada além do necessário para cada *role*. Não se esqueça de substituir o número da sua conta, região e outras informações nos *templates*.
+Ao longo do tutorial precisaremos definir algumas *roles* para dar a cada recurso AWS os acessos necessários para funcionarem. Tentaremos seguir o princípio de acesso mínimo, em que não concedemos nada além do necessário para cada *role*. Não se esqueça de substituir o número da sua conta, região e outras informações nas *policies* mostradas adiante.
 
 ### S3
 
@@ -80,8 +84,8 @@ Note que usamos "pastas" para representar e separar databases, tabelas e partiç
 No Glue será necessário criar um database e um Crawler. A criação do database é super simples pelo console, bastando apenas passar um nome. Na criação do Crawler preste atenção nas seguinte configurações:
 
 - Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db/empresas/`. Ou seja, ele servirá apenas para varrer a tabela empresas.
-- Nas configurações de saída use o database criado anteriomente.
 - Use a IAM Role `CNPJCrawlerRole` que definiremos abaixo.
+- Nas configurações de saída use o database criado anteriomente.
 - No agendamento do Crawler selecionar sob-demanda.
 
 Segundo a documentação, é recomendado que a *role* do Crawler `CNPJCrawlerRole` tenha 
@@ -119,7 +123,7 @@ Neste projeto usei três funções que rodam em ambiente Python 3.9: `check_upda
 2. O arquivo `requirements.txt`, que lista as dependências da função.
 3. Um bash script para gerar o *deployment package*.
 
-Cada bash script deve ser rodado a partir da pasta onde está contidos. Ele faz o seguinte:
+Cada bash script deve ser executado a partir da pasta onde está contidos. Ele faz o seguinte:
 
 1. Cria um virtual env.
 2. Instala as dependências.
@@ -153,7 +157,7 @@ A *role* `SimpleLambdaRole` é similar à criada automaticamente pelo console e 
                 "logs:PutLogEvents"
             ],
             "Resource": [
-                "arn:aws:logs:regiao:numero_da_sua_conta:log-group:/aws/lambda/nome_da_funcao:*"
+                "arn:aws:logs:regiao:numero_da_sua_conta:log-group:*"
             ]
         }
     ]
@@ -251,7 +255,7 @@ Em linhas gerais, a função faz o seguinte:
 3. O CSV é convertido em Parquet usando o pacote `pyarrow`.
 4. O Parquet é enviado ao bucket S3 dentro da estrutura de "pastas" pré-definida para receber os arquivos das tabelas.
 
-Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Devido ao tamanho dos arquivos manipulados, na criação da lambda recomendo alterar as seguintes propriedades:
+Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Porém, no caso desta função, como o arquivo é maior que 50 Mb, não é possível subí-lo diretamente no console. Devemos carregá-lo no bucket criado anteriormente. Devido ao tamanho dos arquivos manipulados, na criação da lambda recomendo alterar as seguintes propriedades:
 
 - Atualizar o nome do arquivo no Handler.
 - Limite de memória RAM: 3008 MB.
@@ -291,13 +295,12 @@ Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem 
             "Effect": "Allow",
             "Action": "lambda:InvokeFunction",
             "Resource": [
-                "arn:aws:lambda:regiao:numero_da_sua_conta:function:fetch_cnpj_data:*",
-                "arn:aws:lambda:regiao:numero_da_sua_conta:function:check-update-cnpj:*",
-                "arn:aws:lambda:regiao:numero_da_sua_conta:function:downloadCNPJTest:*"
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:fetch_cnpj",
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:check_update",
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:download_test"
             ]
         },
         {
-            "Sid": "VisualEditor0",
             "Effect": "Allow",
             "Action": [
                 "glue:GetTables",
