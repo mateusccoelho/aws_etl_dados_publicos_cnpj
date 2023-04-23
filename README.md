@@ -79,6 +79,10 @@ Será necessário um bucket S3 cuja estrutura será dada pelo diagrama abaixo.
 
 Note que usamos "pastas" para representar e separar databases, tabelas e partições. A princípio nenhuma pasta precisa ser criada pois isso será feito automaticamente pela Lambda `fetch_data`.
 
+Lembre que no S3 não existem pastas. Conforme explicado [nessa thread](https://stackoverflow.com/questions/1939743/amazon-s3-boto-how-to-create-a-folder):
+
+> There is no concept of folders or directories in S3. You can create file names like "abc/xys/uvw/123.jpg", which many S3 access tools like S3Fox show like a directory structure, but it's actually just a single file in a bucket.
+
 ### AWS Glue
 
 No Glue será necessário criar um database e um Crawler. A criação do database é super simples pelo console, bastando apenas passar um nome. Na criação do Crawler preste atenção nas seguinte configurações:
@@ -93,7 +97,7 @@ Segundo a documentação, é recomendado que a *role* do Crawler `CNPJCrawlerRol
 1. a *policy* gerenciada pela AWS `AWSGlueServiceRole`;
 2. uma *policy* com os acessos específicos da fonte de dados que ele irá acessar.
 
-A segunda *policy* seria:
+A segunda *policy* deve ter o seguinte conteúdo:
 
 ```json
 {
@@ -117,13 +121,13 @@ A segunda *policy* seria:
 
 O AWS Lambda é um serviço que tenta abstrair ao máximo a execução de uma função. [Esta documentação](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) explica de forma resumida e completa o que é ele faz, como ele pode ser disparado, quais as suas capacidades, etc.
 
-Neste projeto usei três funções que rodam em ambiente Python 3.9: `check_update`, `fetch_data` e `download_test`. O código está organizado na pasta `lambdas`. A pasta de cada lambda contém:
+Neste projeto usaremos três funções que rodam em ambiente Python 3.9: `check_update`, `fetch_data` e `download_test`. O código está organizado na pasta `lambdas`. A pasta de cada lambda contém:
 
 1. O código que de fato será executado.
 2. O arquivo `requirements.txt`, que lista as dependências da função.
 3. Um bash script para gerar o *deployment package*.
 
-Cada bash script deve ser executado a partir da pasta onde está contidos. Ele faz o seguinte:
+Cada bash script deve ser executado a partir da pasta onde está contidos. Eles fazem o seguinte:
 
 1. Cria um virtual env.
 2. Instala as dependências.
@@ -183,7 +187,7 @@ A *role* `LambdaRoleWithS3` usará a *policy* da `SimpleLambdaRole` e mais a *po
 
 Esta função não tem input. Ela faz um web scraping simples para extrair a data de alteração dos arquivos da tabela Empresas no [site da Receita Federal](https://dadosabertos.rfb.gov.br/CNPJ/).
 
-Analisando o código-fonte da página, percebe-se que é simplesmente uma tabela HTML. Portanto, eu utilizo o pacote `beautifulsoup` para tratar a tabela, encontrar a linha correspondente ao arquivo `Empresas0.zip` e extrair a sua data de alteração. É esta data que será passada adiante no pipeline. O retorno da função será um dicionário neste formato:
+Analisando o código-fonte da página, percebe-se que é simplesmente uma tabela HTML. Portanto, utilizamos o pacote `beautifulsoup` para tratar a tabela, encontrar a linha correspondente ao arquivo `Empresas0.zip` e extrair a sua data de alteração. É esta data que será passada adiante no pipeline. O retorno da função será um dicionário neste formato:
 
 ```json
 {
@@ -244,7 +248,8 @@ Esta função faz o download, tratamento e armazenamento dos arquivos da tabela 
 {
   "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas0.zip",
   "table_name": "empresas",
-  "date": "20230416"
+  "date": "20230416",
+  "bucket_name": "projeto-cnpj"
 }
 ```
 
@@ -255,7 +260,9 @@ Em linhas gerais, a função faz o seguinte:
 3. O CSV é convertido em Parquet usando o pacote `pyarrow`.
 4. O Parquet é enviado ao bucket S3 dentro da estrutura de "pastas" pré-definida para receber os arquivos das tabelas.
 
-Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Porém, no caso desta função, como o arquivo é maior que 50 Mb, não é possível subí-lo diretamente no console. Devemos carregá-lo no bucket criado anteriormente. Devido ao tamanho dos arquivos manipulados, na criação da lambda recomendo alterar as seguintes propriedades:
+Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Porém, no caso desta função, como o arquivo é maior que 50 Mb, não é possível subí-lo diretamente no console. Devemos carregá-lo no bucket criado anteriormente. 
+
+Devido ao tamanho dos arquivos manipulados, na criação da lambda é necessário alterar as seguintes propriedades:
 
 - Atualizar o nome do arquivo no Handler.
 - Limite de memória RAM: 3008 MB.
@@ -270,7 +277,7 @@ Cada estado recebe e retorna um documento JSON, o qual pode ser tratado de algum
 
 ![](https://docs.aws.amazon.com/images/step-functions/latest/dg/images/input-output-processing.png)
 
-Cada etapa intermediária na caixa verde representa um filtro ou tratamento que pode ser feito no *input* e *output* do estado. No caso deste projeto, o *input* de alguns estados dependem das informações extraídas nos estados anteriores. Por exemplo, os estados *choice* utilizam o *input* para definir regras que controlam o fluxo de exeução. Assim, essa funcionalidade é essencial para configurarmos como os JSON serão passados adiante e como será a execução de cada estado.
+Cada etapa intermediária na caixa verde representa um filtro ou tratamento que pode ser feito no *input* e *output* do estado. No caso deste projeto, o *input* de alguns estados dependem das informações extraídas nos estados anteriores. Por exemplo, os estados *choice* utilizam o *input* para definir regras que controlam o fluxo de exeução. Assim, essa funcionalidade é essencial para configurarmos como os JSON serão passados adiante.
 
 ![](references/choice_state.png)
 
@@ -319,7 +326,7 @@ Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem 
 }
 ```
 
-Após a configuração você já pode executar o ETL! Se tudo foi configurado corretamente até aqui, na primeira execução a tabela será criada e o fluxo será o da imagem abaixo:
+Após a configuração você já pode executar o ETL! Note que não precisamos de um JSON de input na máquina pois toda a informação necessária será capturada em tempo de execução ou está *hard-coded* no arquivo ASL. Se tudo foi configurado corretamente até aqui, na primeira execução a tabela será criada e o fluxo será o da imagem abaixo:
 
 ![](references/1exec.png)
 
