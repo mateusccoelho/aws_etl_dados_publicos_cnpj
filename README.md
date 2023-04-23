@@ -48,13 +48,17 @@ A solução é baseada em uma máquina de estados para orquestrar as chamadas do
 
 Utilizei a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante.
 
+### IAM Roles
+
+Ao longo do tutorial precisaremos definir algumas *roles* para dar a cada recurso AWS os acessos necessários para funcionarem. Tentaremos seguir o princípio de acesso mínimo, em que não concedemos nada além do necessário para cada *role*. Não se esqueça de substituir o número da sua conta, região e outras informações nos *templates*.
+
 ### S3
 
 Será necessário um bucket S3 cuja estrutura será dada pelo diagrama abaixo.
 
 ```
 .
-└── cnpj-procet/
+└── nome_do_seu_bucket/
     └── cnpj_db/
         └── empresas/
             ├── ref_date=20230416/
@@ -77,8 +81,33 @@ No Glue será necessário criar um database e um Crawler. A criação do databas
 
 - Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db/empresas/`. Ou seja, ele servirá apenas para varrer a tabela empresas.
 - Nas configurações de saída use o database criado anteriomente.
-- Use a IAM Role criada anteriormente `CNPJCrawlerRole`.
+- Use a IAM Role `CNPJCrawlerRole` que definiremos abaixo.
 - No agendamento do Crawler selecionar sob-demanda.
+
+Segundo a documentação, é recomendado que a *role* do Crawler `CNPJCrawlerRole` tenha 
+
+1. a *policy* gerenciada pela AWS `AWSGlueServiceRole`;
+2. uma *policy* com os acessos específicos da fonte de dados que ele irá acessar.
+
+A segunda *policy* seria:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Resource": [
+                "arn:aws:s3:::nome_do_seu_bucket/cnpj_db/empresas*"
+            ]
+        }
+    ]
+}
+```
 
 ### Lambdas
 
@@ -98,13 +127,53 @@ Cada bash script deve ser rodado a partir da pasta onde está contidos. Ele faz 
 
 Os arquivos zip devem ser subidos no console da AWS.
 
-Utilizei as seguintes IAM Roles para cada lambda:
+Sobre as *roles*, a tabela abaixo mostra as roles que cada função deve assumir.
 
 | Nome          | Role             |
 |---------------|------------------|
 | check_update  | SimpleLambdaRole |
 | fetch_data    | LambdaRoleWithS3 |
 | download_test | SimpleLambdaRole |
+
+A *role* `SimpleLambdaRole` é similar à criada automaticamente pelo console e tem o seguinte template: 
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "logs:CreateLogGroup",
+            "Resource": "arn:aws:logs:regiao:numero_da_sua_conta:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:regiao:numero_da_sua_conta:log-group:/aws/lambda/nome_da_funcao:*"
+            ]
+        }
+    ]
+}
+```
+
+A *role* `LambdaRoleWithS3` usará a *policy* da `SimpleLambdaRole` e mais a *policy* definida abaixo:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "s3:PutObject",
+            "Resource": "arn:aws:s3:::nome_do_seu_bucket/*"
+        }
+    ]
+}
+```
 
 #### check_update
 
@@ -210,13 +279,50 @@ Usaremos 4 tipos de estados:
 
 A máquina de estados pode ser configurada de maneira visual pelo Workflow Studio ou em formato de texto usando a linguagem Amazon States Language (ASL). Ela é baseada em JSON e é fácil de entender. Entretanto, neste projeto eu usei o Studio e extraí o código ASL resultante, o qual está na pasta `state_machine`. Isso deixou a minha vida muito fácil porque usar o Studio economiza muitas consultas à documentação oficial. 
 
-Para usar o código aqui disponibilizado será necessário substituir os valores cercados por `||` pelo ARN ou nome do recurso correspondente (removendo os `||` também). Na criação da máquina no console basta selecionar a opção de criar a partir de código. Além disso, selecione o tipo "standard" de máquinas de estados.
+Para usar o código aqui disponibilizado será necessário substituir os valores cercados por `||` pelo ARN ou nome do recurso correspondente (removendo os `||` também). Na criação da máquina no console basta selecionar a opção de criar a partir de código. Além disso, selecione o tipo *standard*.
 
-### IAM Roles
+Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem a seguinte *policy*:
 
-...
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "lambda:InvokeFunction",
+            "Resource": [
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:fetch_cnpj_data:*",
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:check-update-cnpj:*",
+                "arn:aws:lambda:regiao:numero_da_sua_conta:function:downloadCNPJTest:*"
+            ]
+        },
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "glue:GetTables",
+                "glue:GetPartitions",
+                "glue:StartCrawler",
+                "glue:GetTable"
+            ],
+            "Resource": [
+                "arn:aws:glue:regiao:numero_da_sua_conta:database/nome_do_db",
+                "arn:aws:glue:*:numero_da_sua_conta:catalog",
+                "arn:aws:glue:regiao:numero_da_sua_conta:table/nome_do_db/*",
+                "arn:aws:glue:regiao:numero_da_sua_conta:crawler/nome_do_crawler"
+            ]
+        }
+    ]
+}
+```
+
+## Próximos passos
+
+- Criar um template CloudFormation para instanciar os recursos automaticamente.
+- Expandir o ETL para extrair todas as bases.
 
 ## Referências
 
-- https://docs.aws.amazon.com/step-functions/latest/dg/concepts-input-output-filtering.html
 - https://github.com/aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ
+- https://docs.aws.amazon.com/glue/latest/dg/crawler-prereqs.html
+- https://docs.aws.amazon.com/step-functions/latest/dg/concepts-input-output-filtering.html
