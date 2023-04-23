@@ -1,5 +1,22 @@
 # ETL com AWS Step Functions - Dados Públicos CNPJ
 
+- [ETL com AWS Step Functions - Dados Públicos CNPJ](#etl-com-aws-step-functions---dados-públicos-cnpj)
+  - [Pré-requisitos](#pré-requisitos)
+  - [Serviços de dados e analytics na AWS](#serviços-de-dados-e-analytics-na-aws)
+  - [Desenho da solução](#desenho-da-solução)
+  - [Implementação](#implementação)
+    - [IAM Roles](#iam-roles)
+    - [S3](#s3)
+    - [AWS Glue](#aws-glue)
+    - [Lambdas](#lambdas)
+      - [check\_update](#check_update)
+      - [download\_test](#download_test)
+      - [fetch\_data](#fetch_data)
+    - [Máquina de estados](#máquina-de-estados)
+    - [EventBridge Scheduler](#eventbridge-scheduler)
+  - [Próximos passos](#próximos-passos)
+  - [Referências](#referências)
+
 Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um *pipeline* de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Em particular, trabalhei com a tabela Empresas. Nas próximas seções mostrarei como implementar o *pipeline*. 
 
 A lista abaixo mostra os serviços da AWS empregados.  
