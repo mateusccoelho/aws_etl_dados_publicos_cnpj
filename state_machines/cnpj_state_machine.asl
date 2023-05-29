@@ -35,7 +35,7 @@
               {
                 "Variable": "$.exists",
                 "BooleanEquals": false,
-                "Next": "BuildFetchLambdaInput"
+                "Next": "FileLoop"
               }
             ],
             "Default": "GetTablePartition"
@@ -64,7 +64,17 @@
             "ResultSelector": {
               "ShouldUpdateTable.$": "$.Payload.body" 
             },
-            "ResultPath": "$.CheckLastPartitionResult"
+            "ResultPath": "$.CheckLastPartitionResult",
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "States.TaskFailed"
+                ],
+                "BackoffRate": 2,
+                "IntervalSeconds": 60,
+                "MaxAttempts": 2
+              }
+            ]
           },
           "DownloadTest": {
             "Type": "Choice",
@@ -72,23 +82,63 @@
               {
                 "Variable": "$.CheckLastPartitionResult.ShouldUpdateTable",
                 "BooleanEquals": false,
-                "Next": "Success"
+                "Next": "SuccessWithoutUpdate"
               }
             ],
-            "Default": "BuildFetchLambdaInput"
+            "Default": "FileLoop"
           },
-          "Success": {
+          "SuccessWithoutUpdate": {
             "Type": "Succeed"
           },
-          "BuildFetchLambdaInput": {
-            "Type": "Pass",
-            "End": true
+          "FileLoop": {
+            "Type": "Map",
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "Fetch file",
+              "States": {
+                "Fetch file": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "Parameters": {
+                    "Payload.$": "$",
+                    "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:fetch_data"
+                  },
+                  "End": true,
+                  "Retry": [
+                    {
+                      "ErrorEquals": [
+                        "States.TaskFailed"
+                      ],
+                      "BackoffRate": 2,
+                      "IntervalSeconds": 60,
+                      "MaxAttempts": 2
+                    }
+                  ]
+                }
+              }
+            },
+            "InputPath": "$",
+            "End": true,
+            "ItemsPath": "$.files"
           }
         }
       },
       "InputPath": "$",
-      "End": true,
+      "Next": "CNPJCrawler",
       "ItemsPath": "$.Tables"
+    },
+    "CNPJCrawler": {
+      "Type": "Task",
+      "Parameters": {
+        "Name": "CNPJCrawler"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Next": "SuccessWithUpdate"
+    },
+    "SuccessWithUpdate": {
+      "Type": "Succeed"
     }
   }
 }

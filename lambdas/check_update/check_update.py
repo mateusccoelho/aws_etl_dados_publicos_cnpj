@@ -1,9 +1,9 @@
 import re
 import logging
 import pprint
+from urllib.request import urlopen
 
 from bs4 import BeautifulSoup
-from urllib.request import urlopen
 
 if(logging.getLogger().hasHandlers()):
     logging.getLogger().setLevel(logging.INFO)
@@ -20,27 +20,32 @@ ALLOWED_TABLE_NAMES = [
 ]
 CNPJ_DATA_REPOSITORY = 'https://dadosabertos.rfb.gov.br/CNPJ/'
 
-def lambda_handler(event, context):
-    page = urlopen(CNPJ_DATA_REPOSITORY)
-    html = page.read().decode("utf-8")
-    soup = BeautifulSoup(html, "html.parser")
 
-    tables_to_parse = event['Tables']
-    tables_in_glue = {metadata_dict['Name'] for metadata_dict in event['DBOutput']['TableList']}
-    result_dict = {}
+def make_metadata_dict(tables_to_parse, tables_in_glue):
+    """ Make the structure of the dictionary in which the metadata
+        will be stored.
+    """
+
+    metadata_dict = {}
     for table in tables_to_parse:
         if(table in ALLOWED_TABLE_NAMES):
-            result_dict[table] = {
+            metadata_dict[table] = {
                 'name': table,
                 'exists': table in tables_in_glue,
                 'files': [],
                 'ref_date': 0
             }
+    return metadata_dict
+
+def search_html_table(parsed_html, metadata_dict):
+    """ Parse the table HTML and store the collected metadata
+        in the result dictionary.
+    """
 
     # first three rows are header, navegation and footer rows
-    # column 0 is file icon, 1 is file name and 2 is last modified date
-    table_rows = soup.find_all('tr')[3:-1]
+    table_rows = parsed_html.find_all('tr')[3:-1]
     for row in table_rows: 
+        # column 0 is file icon, 1 is file name and 2 is last modified date
         columns = row.find_all('td')
 
         # skipping folders
@@ -53,24 +58,55 @@ def lambda_handler(event, context):
             repl = '', 
             string = raw_file_name.split('.')[0].lower() 
         )
-        if(parsed_file_name not in result_dict):
+        if(parsed_file_name not in metadata_dict):
             continue
         
         link = CNPJ_DATA_REPOSITORY + columns[1].a['href']
         ref_date = int(columns[2].text[:10].replace('-', ''))
 
-        table_dict = result_dict[parsed_file_name]
+        table_dict = metadata_dict[parsed_file_name]
         table_dict['files'].append(link)
         if(ref_date > table_dict['ref_date']):
             table_dict['ref_date'] = ref_date
 
-    for name, table_dict in list(result_dict.items()):
-        if(not table_dict['files'] or table_dict['ref_date'] == 0):
-            del result_dict[name]
+def make_response_dict(metadata_dict, bucket_name):
+    """ Make the dictionary that contains the information that 
+        will be returned and that is needed by the state machine.
+    """
+
+    response_dict = {'Tables': []}
+    
+    for table_dict in metadata_dict.values():
+        if(table_dict['files']):
+            new_files_list = []
+            for file_address in table_dict['files']:
+                new_files_list.append({
+                    'url': file_address,
+                    'table_name': table_dict['name'],
+                    'bucket_name': bucket_name,
+                    'date': table_dict['ref_date']
+                })
+            table_dict['files'] = new_files_list
+            response_dict['Tables'].append(table_dict)
+    
+    return response_dict
+
+def lambda_handler(event, context):
+    page = urlopen(CNPJ_DATA_REPOSITORY)
+    html = page.read().decode("utf-8")
+    parsed_html = BeautifulSoup(html, "html.parser")
+
+    bucket_name = event['BucketName']
+    tables_to_parse = event['Tables']
+    tables_in_glue = {metadata_dict['Name'] for metadata_dict in event['DBOutput']['TableList']}
+
+    metadata_dict = make_metadata_dict(tables_to_parse, tables_in_glue)
+    search_html_table(parsed_html, metadata_dict)
+    response_dict = make_response_dict(metadata_dict, bucket_name)
         
     return {
         'statusCode': 200,
-        'body': {'Tables': list(result_dict.values())}
+        'body': response_dict
     }
 
 
@@ -82,6 +118,7 @@ if(__name__ == '__main__'):
                 "cnaes",
                 "municipios"
             ],
+            "BucketName": "project-cnpj",
             "DBOutput": {
                 "TableList": [
                 {
