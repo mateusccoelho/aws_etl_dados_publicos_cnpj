@@ -17,9 +17,20 @@
   - [Próximos passos](#próximos-passos)
   - [Referências](#referências)
 
-Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um *pipeline* de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Em particular, trabalhei com a tabela Empresas. Nas próximas seções mostrarei como implementar o *pipeline*. 
+Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um *pipeline* de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Mais especificamente, extrairemos as seguintes tabelas:
 
-A lista abaixo mostra os serviços da AWS empregados.  
+- Empresas
+- Sócios
+- Estabelecimentos
+- Simples
+- Municípios
+- CNAEs
+- Naturezas jurídicas
+- Motivos
+- Países
+- Qualificações
+
+Para isso utilizaremos os seguintes serviços: 
 
 - AWS Lambda: executa funções Python.
 - AWS Step Functions: uma máquina de estados que orquestra os outros serviços AWS utilizados.
@@ -27,7 +38,7 @@ A lista abaixo mostra os serviços da AWS empregados.
 - AWS Glue Data Catalog: repositório de metadados das tabelas.
 - Amazon EventBridge Scheduler: ferramenta para agendar a execução da máquina de estados.
 
-Uma característica em comum é que são serverless e totalmente gerenciados. Ou seja, só precisei me preocupar com o código, e não com a infraestrutura.
+Uma característica em comum é que são serverless e totalmente gerenciados. Ou seja, só é necessário se preocupar com o código, e não com a infraestrutura.
 
 ## Pré-requisitos
 
@@ -56,14 +67,74 @@ Neste projeto trabalharemos apenas nas duas primeiras camadas. Primeiro construi
 
 ![](references/stepfunctions_graph.png)
 
-A solução é baseada em uma máquina de estados para orquestrar as chamadas dos lambdas e da API do AWS Glue. Ela será executada semanalmente com o auxílio do Amazon EventBridge. Em linhas gerais, seguiremos o seguinte fluxo:
+A solução é baseada em uma máquina de estados para orquestrar as chamadas das lambdas e da API do AWS Glue. Ela será executada semanalmente com o auxílio do Amazon EventBridge. Em linhas gerais, seguiremos o seguinte fluxo:
 
-1. Coletamos a data da último atualização da tabela Empresas no site da Receita. 
-2. Coletamos a lista de tabelas criadas no database `cnpj` do Data Catalog.
-3. Verificamos se a tabela já existe. Se sim, seguimos para o próximo passo. Se não, seguimos para o passo 5.
-4. Coletamos as partições da tabela e rodamos uma lambda para verificar se devemos ingerir um novo batch na tabela. Se não, o pipeline se encerra aqui. Se sim, seguimos para o próximo passo.
-5. Executa-se 10 vezes em paralelo uma função que irá baixar um arquivo de cada vez e guardá-lo na "pasta" correta do bucket S3.
-6. Finalmente rodamos um Crawler do AWS Glue para "descobrir" a nova partição e agregá-la aos metadados da tabela.
+1. Passamos na entrada da máquina de estados um JSON com a lista de tabelas que queremos extrair e o nome do bucket onde elas serão armazenadas. Por exemplo:
+
+```json
+{
+    "Tables": ["empresas", "simples", "socios"],
+    "BucketName": "projeto-cnpj"
+}
+```
+
+Note que o pipeline suporta 10 tabelas, mas podemos escolher especificamente quais queremos atualizar.
+
+2. Fazemos uma chamada à API do Glue para obter a lista de tabelas que temos atualmente no database do projeto no Data Catalog. A saída dessa etapa é a entrada juntada com o resultado da chamada. Na primeira execução do ETL não existirão tabelas, então o resultado será, por exemplo:
+
+```json
+{
+  "Tables": ["empresas", "cnaes", "municipios"],
+  "BucketName": "projeto-cnpj",
+  "DBOutput": {
+    "TableList": []
+  }
+}
+```
+
+Quando rodarmos essa parte com algumas tabelas já criadas, a lista da chave "TableList" será populada com um dicionário para cada tabela. ELes conterão metadados como data de criação, nome da tabela, colunas de particionamento, etc. O JSON abaixo mostra como seria um pequeno trecho dos metadados:
+
+```json
+{
+    "CatalogId": "numero_da_conta",
+    "CreateTime": "2023-04-23T22:20:15Z",
+    "CreatedBy": "arn:aws:sts::numero_da_conta:assumed-role/CNPJCrawlerRole/AWS-Crawler",
+    "DatabaseName": "cnpj",
+    "IsRegisteredWithLakeFormation": false,
+    "LastAccessTime": "2023-04-23T22:20:15Z",
+    "Name": "empresas",
+    "Owner": "owner",
+    "Parameters": {
+        "sizeKey": "1608647538",
+        "objectCount": "10",
+        "UPDATED_BY_CRAWLER": "EmpresasCrawler",
+        "CrawlerSchemaSerializerVersion": "1.0",
+        "recordCount": "53293844",
+        "averageRecordSize": "47",
+        "CrawlerSchemaDeserializerVersion": "1.0",
+        "compressionType": "none",
+        "classification": "parquet",
+        "typeOfData": "file"
+   },
+   "PartitionKeys": [
+    {
+        "Name": "ref_date",
+        "Type": "string"
+    }
+   ],
+...
+```
+
+No caso deste projeto essas informações não são importantes, pois o objetivo da chamada da API é simplesmente saber quais tabelas já existem e quais precisam ser criadas.
+
+3. Chamamos uma Lambda que irá acessar o site do governo e fará um *web scrapping* a fim de obter os links dos arquivos de dados e as datas de atualização. A entrada desta etapa 
+
+2. Coletamos a data da último atualização da tabela Empresas no site da Receita. 
+3. Coletamos a lista de tabelas criadas no database `cnpj` do Data Catalog.
+4. Verificamos se a tabela já existe. Se sim, seguimos para o próximo passo. Se não, seguimos para o passo 5.
+5. Coletamos as partições da tabela e rodamos uma lambda para verificar se devemos ingerir um novo batch na tabela. Se não, o pipeline se encerra aqui. Se sim, seguimos para o próximo passo.
+6. Executa-se 10 vezes em paralelo uma função que irá baixar um arquivo de cada vez e guardá-lo na "pasta" correta do bucket S3.
+7.  Finalmente rodamos um Crawler do AWS Glue para "descobrir" a nova partição e agregá-la aos metadados da tabela.
 
 ## Implementação
 
@@ -104,7 +175,7 @@ Lembre que no S3 não existem pastas. Conforme explicado [nessa thread](https://
 
 No Glue será necessário criar um database e um Crawler. A criação do database é super simples pelo console, bastando apenas passar um nome. Na criação do Crawler preste atenção nas seguinte configurações:
 
-- Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db/empresas/`. Ou seja, ele servirá apenas para varrer a tabela empresas.
+- Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db`. Ou seja, ele varrerá os arquivos de todas as tabelas que criaremos.
 - Use a IAM Role `CNPJCrawlerRole` que definiremos abaixo.
 - Nas configurações de saída use o database criado anteriomente.
 - No agendamento do Crawler selecionar sob-demanda.
@@ -127,7 +198,7 @@ A segunda *policy* deve ter o seguinte conteúdo:
                 "s3:PutObject"
             ],
             "Resource": [
-                "arn:aws:s3:::nome_do_seu_bucket/cnpj_db/empresas*"
+                "arn:aws:s3:::nome_do_seu_bucket/cnpj_db*"
             ]
         }
     ]
@@ -144,7 +215,7 @@ Neste projeto usaremos três funções que rodam em ambiente Python 3.9: `check_
 2. O arquivo `requirements.txt`, que lista as dependências da função.
 3. Um bash script para gerar o *deployment package*.
 
-Cada bash script deve ser executado a partir da pasta onde está contidos. Eles fazem o seguinte:
+Cada bash script deve ser executado a partir da pasta onde está contido. Eles fazem o seguinte:
 
 1. Cria um virtual env.
 2. Instala as dependências.
@@ -213,7 +284,7 @@ Analisando o código-fonte da página, percebe-se que é simplesmente uma tabela
 }
 ```
 
-Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Na criação da lambda recomendo alterar as seguintes propriedades:
+Conforme descrito acima, o *deployment package* desta função deve ser construído e carregado na AWS. Na criação da lambda recomendo alterar as seguintes propriedades:
 
 - Timeout igual a 15s. As vezes a requisição ao site da RF demora.
 - Atualizar o nome do arquivo no Handler.
@@ -288,7 +359,7 @@ Devido ao tamanho dos arquivos manipulados, na criação da lambda é necessári
 
 ### Máquina de estados
 
-AWS Step Funcitions é um serviço da AWS para orquestrar chamadas de API em formato de uma máquina de estados. Podemos representar tal máquina como um grafo, conforme mostrado na seção desenho da solução ![desenho da solução](#desenho-da-solução). Os nós representam estados (*states*), que podem ser chamadas de API ou tipos especiais de estado, como o *Choice* ou o *Map*. As arestas indicam como será o fluxo de execução da máquina.
+AWS Step Funcitions é um serviço da AWS para orquestrar chamadas de API em formato de uma máquina de estados. Podemos representar tal máquina como um grafo, conforme mostrado na seção desenho da solução ![desenho da solução](#desenho-da-solução). Os nós representam estados (*states*), que podem ser chamadas de API ou controladores do fluxo de execução, como o *Choice* ou o *Map*. As arestas indicam como será o fluxo de execução da máquina.
 
 Cada estado recebe e retorna um documento JSON, o qual pode ser tratado de algumas formas. A figura abaixo (retirada da documentação oficial) mostra como flui a informação dentro de um estado.
 
@@ -384,7 +455,7 @@ A *role* terá o seguinte formato:
 ## Próximos passos
 
 - Criar um template CloudFormation para instanciar os recursos automaticamente.
-- Expandir o ETL para extrair todas as bases.
+- Criar testes unitários.
 
 ## Referências
 
