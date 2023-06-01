@@ -127,14 +127,225 @@ Quando rodarmos essa parte com algumas tabelas já criadas, a lista da chave "Ta
 
 No caso deste projeto essas informações não são importantes, pois o objetivo da chamada da API é simplesmente saber quais tabelas já existem e quais precisam ser criadas.
 
-3. Chamamos uma Lambda que irá acessar o site do governo e fará um *web scrapping* a fim de obter os links dos arquivos de dados e as datas de atualização. A entrada desta etapa 
+3. Chamamos uma Lambda que irá acessar o site da Receita Federal e fará um *web scrapping* a fim de obter os links dos arquivos de dados e as datas de atualização. A saída dessa etapa terá o seguinte formato:
 
-2. Coletamos a data da último atualização da tabela Empresas no site da Receita. 
-3. Coletamos a lista de tabelas criadas no database `cnpj` do Data Catalog.
-4. Verificamos se a tabela já existe. Se sim, seguimos para o próximo passo. Se não, seguimos para o passo 5.
-5. Coletamos as partições da tabela e rodamos uma lambda para verificar se devemos ingerir um novo batch na tabela. Se não, o pipeline se encerra aqui. Se sim, seguimos para o próximo passo.
-6. Executa-se 10 vezes em paralelo uma função que irá baixar um arquivo de cada vez e guardá-lo na "pasta" correta do bucket S3.
-7.  Finalmente rodamos um Crawler do AWS Glue para "descobrir" a nova partição e agregá-la aos metadados da tabela.
+<details>
+    <summary>JSON</summary>
+  
+    ```json
+    {
+        "Tables": [
+            {
+                "name": "empresas",
+                "exists": true,
+                "files": [
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas0.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas1.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas2.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas3.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas5.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas6.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas7.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas8.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    },
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas9.zip",
+                        "table_name": "empresas",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    }
+                ],
+                "ref_date": 20230516
+            },
+            {
+                "name": "cnaes",
+                "exists": false,
+                "files": [
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Cnaes.zip",
+                        "table_name": "cnaes",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    }
+                ],
+                "ref_date": 20230516
+            },
+            {
+                "name": "municipios",
+                "exists": false,
+                "files": [
+                    {
+                        "url": "https://dadosabertos.rfb.gov.br/CNPJ/Municipios.zip",
+                        "table_name": "municipios",
+                        "bucket_name": "project-cnpj",
+                        "date": 20230516
+                    }
+                ],
+                "ref_date": 20230516
+            }
+        ]
+    }
+    ```
+
+</details>
+
+Dentro do dicionário "Tables" teremos um dicionário para cada tabela que queremos processar. Cada dicionário conterá a data da última atualização da tabela segundo o site, uma flag indicando se a tabela já existe na AWS e uma lista de informações sobre cada arquivo que será baixado. Repare que os dicionários sobre os arquivos são meio repetitivos, porém essa estrutura é necessária para o funcionamento da função que baixa cada arquivo individualmente.
+
+4. Iniciamos um loop em que cada tabela será analisada paralelamente e de forma independente. Ou seja, todas os passos da máquina de estados dentro deste loop serão executados uma vez para cada tabela. A entrada desta etapa também será repartida de forma que cada "ramo" do loop recebe um dos dicionários contidos na lista `$.Tables` da etapa anterior. Por exemplo, o ramo que seguirá com a tabela Municípios terá o seguinte JSON:
+
+```json
+{
+    "name": "municipios",
+    "exists": false,
+    "files": [
+        {
+            "url": "https://dadosabertos.rfb.gov.br/CNPJ/Municipios.zip",
+            "table_name": "municipios",
+            "bucket_name": "project-cnpj",
+            "date": 20230516
+        }
+    ],
+    "ref_date": 20230516
+}
+```
+
+5. Essa etapa controla o fluxo da máquina criando uma estrutura condicional. O elemento `$.exists` da entrada será avaliado. Se a tabela não existir, o fluxo irá diretamente para o passo 9. Se existir, o fluxo continua no passo 6 pois um teste adicional precisa ser feito.
+
+6. Essa etapa fará uma chamada de API do Glue para coletar os metadados das partições da tabela. O objetivo aqui é criar uma lista com os valores das partições da tabela. O resultado, portanto, terá o seguinte formato:
+
+<details>
+    <summary>JSON</summary>
+
+    ```json
+    {
+        "name": "empresas",
+        "exists": true,
+        "files": [
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas0.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas1.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas2.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas3.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas5.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas6.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas7.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas8.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            },
+            {
+                "url": "https://dadosabertos.rfb.gov.br/CNPJ/Empresas9.zip",
+                "table_name": "empresas",
+                "bucket_name": "projeto-cnpj",
+                "date": 20230516
+            }
+        ],
+        "ref_date": 20230516,
+        "GetPartitionsOutput": {
+            "partitionValues": [
+                [
+                    "20230516"
+                ],
+                [
+                    "20230411"
+                ]
+            ]
+        }
+    }
+    ```
+</details>
+
+
+Repare que no final do JSON um novo dicionário contendo as partições foi agregado.
+
+7. A entrada será processada por uma função Python que simplesmente fará um teste se a data de atualização coletada no site da RF é maior que a partição mais recente coletada no passo anterior. Esse teste é útil porque não precisamos baixar os arquivos da tabela se ela não sofreu atualização.
 
 ## Implementação
 
