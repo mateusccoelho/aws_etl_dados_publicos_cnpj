@@ -16,7 +16,33 @@ else:
     )
 
 COLUMNS = {
-    'empresas': ['cnpj_raiz', 'raz_soc', 'nat_jud', 'qualif_resp', 'cap_soc', 'porte', 'ent_fed']
+    'empresas': [
+        'cnpj_raiz', 'raz_soc', 'nat_jud', 'qualif_resp', 'cap_soc', 
+        'porte', 'ent_fed'
+    ],
+    'municipios': ['codigo', 'desc'],
+    'cnaes': ['codigo', 'desc'],
+    'naturezas': ['codigo', 'desc'],
+    'qualificacoes': ['codigo', 'desc'],
+    'paises': ['codigo', 'desc'],
+    'motivos': ['codigo', 'desc'],
+    'socios': [
+        'cnpj_raiz', 'tpes_soc', 'nome_soc', 'cpf_cnpj_soc', 'cod_qualif_soc', 
+        'dt_entrada', 'cod_pais', 'cpf_rep_legal', 'nome_rep_legal',
+        'cod_qualif_rep', 'fx_etaria_soc'
+    ],
+    'simples': [
+        'cnpj_raiz', 'opcao_simpl', 'dt_opcao_simpl', 'dt_exclusao_simpl', 
+        'opcao_mei', 'dt_opcao_mei', 'dt_exclusao_mei'
+    ],
+    'estabelecimentos': [
+        'cnpj_raiz', 'filial', 'dv', 'cod_id_tipo', 'nome_fant', 'cod_sit_cad',
+        'dt_ref_sit_cad', 'cod_mot_sit_cad', 'nom_cidade_ext', 'cod_pais',
+        'dt_abrt', 'cnae_pri', 'cnae_sec', 'end_tipo', 'end_desc', 'end_num',
+        'end_compl', 'end_bairro', 'end_cep', 'end_uf', 'end_cod_muni',
+        'ddd1', 'tel1', 'ddd2', 'tel2', 'ddd_fax', 'fax', 'email', 'sit_espec',
+        'dt_sit_espec' 
+    ]
 }
 
 def lambda_handler(event, context):
@@ -50,16 +76,22 @@ def lambda_handler(event, context):
     parquet_file_path = f'/tmp/{orig_file_name}.parquet'
     pq.write_table(table, parquet_file_path)
 
+    logging.info('Uploading parquet file')
     s3 = boto3.client('s3')
     partition_value = event['date']
     file_key = f'cnpj_db/{table_name}/ref_date={partition_value}/{orig_file_name}.parquet'
     s3.upload_file(parquet_file_path, bucket_name, file_key)
 
+    logging.info('Cleaning temporary directory')
+    os.remove(zip_file_path)
+    os.remove(csv_path)
+    os.remove(parquet_file_path)
+
 if(__name__ == '__main__'):
     lambda_handler({
-        'url':'https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip', 
-        'table_name':'empresas',
-        'date': '20230409',
-        'bucket_name': 'projeto-cnpj'
+        "url":"https://dadosabertos.rfb.gov.br/CNPJ/Empresas4.zip", 
+        "table_name":"empresas",
+        "date": "20230409",
+        "bucket_name": "projeto-cnpj"
         }, {}
     )
