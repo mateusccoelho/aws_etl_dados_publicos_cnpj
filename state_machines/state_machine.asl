@@ -6,7 +6,7 @@
       "Type": "Task",
       "Next": "GetCNPJDownloadInfo",
       "Parameters": {
-        "DatabaseName": "cnpj"
+        "DatabaseName": "||nome do database||"
       },
       "Resource": "arn:aws:states:::aws-sdk:glue:getTables",
       "ResultPath": "$.DBOutput"
@@ -16,7 +16,7 @@
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "Payload.$": "$",
-        "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:check_update2"
+        "FunctionName": "||arn da função check_update||"
       },
       "OutputPath": "$.Payload.body",
       "Next": "TableLoop"
@@ -43,7 +43,7 @@
           "GetTablePartition": {
             "Type": "Task",
             "Parameters": {
-              "DatabaseName": "cnpj",
+              "DatabaseName": "||nome do database||",
               "TableName.$": "$.name"
             },
             "Resource": "arn:aws:states:::aws-sdk:glue:getPartitions",
@@ -58,7 +58,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "Payload.$": "$",
-              "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:download_test2"
+              "FunctionName": "||arn do lambda download_test||"
             },
             "Next": "DownloadTest",
             "ResultSelector": {
@@ -103,7 +103,7 @@
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": {
                     "Payload.$": "$",
-                    "FunctionName": "arn:aws:lambda:us-east-1:598433695633:function:fetch_data"
+                    "FunctionName": "||arn do lambda fetch_data||"
                   },
                   "End": true,
                   "Retry": [
@@ -132,7 +132,7 @@
     "CNPJCrawler": {
       "Type": "Task",
       "Parameters": {
-        "Name": "CNPJCrawler"
+        "Name": "||nome do crawler||"
       },
       "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
       "Next": "SuccessWithUpdate"
