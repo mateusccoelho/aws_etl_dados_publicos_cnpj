@@ -4,7 +4,7 @@
   - [Pré-requisitos](#pré-requisitos)
   - [Serviços de dados e analytics na AWS](#serviços-de-dados-e-analytics-na-aws)
   - [Desenho da solução](#desenho-da-solução)
-  - [Implementação](#implementação)
+  - [Detalhes de cada componente](#detalhes-de-cada-componente)
     - [IAM Roles](#iam-roles)
     - [S3](#s3)
     - [AWS Glue](#aws-glue)
@@ -12,10 +12,10 @@
       - [check\_update](#check_update)
       - [download\_test](#download_test)
       - [fetch\_data](#fetch_data)
-    - [Máquina de estados](#máquina-de-estados)
+    - [Step Functions](#step-functions)
       - [Descrição detalhada da máquina](#descrição-detalhada-da-máquina)
     - [EventBridge Scheduler](#eventbridge-scheduler)
-  - [Próximos passos](#próximos-passos)
+  - [Implementação](#implementação)
   - [Referências](#referências)
 
 Este projeto mostra como utilizar os serviços da [Amazon Web Services (AWS)](https://aws.amazon.com/pt/?nc2=h_lg) para construir um *pipeline* de extração de dados. O objetivo é capturar os [dados do Cadastro Nacional de Pessoas Jurídicas (CNPJ)](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj) disponibilizado pela Receita Federal (RF) em [seu site](https://dadosabertos.rfb.gov.br/CNPJ/). Mais especificamente, extrairemos as seguintes tabelas:
@@ -38,15 +38,16 @@ Para isso utilizaremos os seguintes serviços:
 - Amazon S3: object storage para guardar os arquivos de dados.
 - AWS Glue Data Catalog: repositório de metadados das tabelas.
 - Amazon EventBridge Scheduler: ferramenta para agendar a execução da máquina de estados.
+- AWS CloudFormation: deploy automático de infraestrutura por meio de um template YAML.
 
 Uma característica em comum é que são serverless e totalmente gerenciados. Ou seja, só é necessário se preocupar com o código, e não com a infraestrutura.
 
 ## Pré-requisitos
 
-- Ter uma conta AWS. Todos os serviços deste tutorial se enquadram no [nível gratuito](https://aws.amazon.com/pt/free/?nc2=h_ql_pr_ft&all-free-tier.sort-by=item.additionalFields.SortRank&all-free-tier.sort-order=asc&awsf.Free%20Tier%20Types=*all&awsf.Free%20Tier%20Categories=*all) para contas novas. Porém, se sua conta já for antiga, a boa notícia é que precisei gastar menos de US$ 0,20 para fazer os testes. O resposável pelo maior custo foi o Crawler do Data Catalog.
-- Conhecimentos básicos de AWS e do console.
 - Ter Python 3.9 instalado na sua máquina.
-- Ter conhecimentos básicos de engenharia de dados.
+- Ter uma conta AWS. Todos os serviços deste tutorial se enquadram no [nível gratuito](https://aws.amazon.com/pt/free/?nc2=h_ql_pr_ft&all-free-tier.sort-by=item.additionalFields.SortRank&all-free-tier.sort-order=asc&awsf.Free%20Tier%20Types=*all&awsf.Free%20Tier%20Categories=*all) para contas novas. Porém, se sua conta já for antiga, a boa notícia é que precisei gastar menos de US$ 0,20 para fazer os testes.
+- Conhecimentos básicos de AWS.
+- Conhecimentos básicos de engenharia de dados.
 
 ## Serviços de dados e analytics na AWS
 
@@ -80,17 +81,15 @@ Com relação ao formato das tabelas, manteremos todas as colunas e seus respect
 - Particionamento para separar os dados fisicamente, acelerando consultas em "fotografias" específicas da base e evitando full scan.
 - Organização das colunas em chunks. Estas contém estatísticas dos dados que ajudam na otimização de consultas. Por exemplo, um WHERE numa coluna numérica pode se aproveitar das estatísticas para saber quais chunks ler e quais não. 
 
-## Implementação
-
-Recomendo usar a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante.
+## Detalhes de cada componente
 
 ### IAM Roles
 
-Ao longo do tutorial precisaremos definir algumas *roles* para dar a cada recurso AWS os acessos necessários para funcionarem. Tentaremos seguir o princípio de acesso mínimo, em que não concedemos nada além do necessário para cada *role*. Não se esqueça de substituir o número da sua conta, região e outras informações nas *policies* mostradas adiante.
+Precisaremos definir algumas *roles* e *policies* para dar a cada recurso AWS os acessos necessários para funcionarem. Tentaremos seguir o princípio de acesso mínimo, em que não concedemos nada além do necessário para cada *role*.
 
 ### S3
 
-Será necessário um bucket S3 cuja estrutura será dada pelo diagrama abaixo.
+Será necessário um *bucket* S3 cuja estrutura será dada pelo diagrama abaixo.
 
 ```
 .
@@ -123,21 +122,7 @@ Lembre-se que no S3 não existem pastas. Conforme explicado [nessa thread](https
 
 > There is no concept of folders or directories in S3. You can create file names like "abc/xys/uvw/123.jpg", which many S3 access tools like S3Fox show like a directory structure, but it's actually just a single file in a bucket.
 
-### AWS Glue
-
-No Glue será necessário criar um database e um Crawler. A criação do database é super simples pelo console, bastando apenas passar um nome. Na criação do Crawler preste atenção nas seguinte configurações:
-
-- Configure uma fonte de dados originada do bucket S3 que criamos anteriormente. A localização sobre a qual o crawler atuará será `s3://nome_do_seu_bucket/cnpj_db`. Ou seja, ele varrerá os arquivos de todas as tabelas que criaremos.
-- Use a IAM Role `CNPJCrawlerRole` que definiremos abaixo.
-- Nas configurações de saída use o database criado anteriomente.
-- No agendamento do Crawler selecionar sob-demanda.
-
-Segundo a documentação, é recomendado que a *role* `CNPJCrawlerRole` tenha 
-
-1. a *policy* gerenciada pela AWS `AWSGlueServiceRole`;
-2. uma *policy* com os acessos específicos da fonte de dados que ele irá acessar.
-
-A segunda *policy* deve ter o seguinte conteúdo:
+Para atribuir acessos a esse *bucket* criaremos a *policy* `CNPJBucketPolicy` abaixo.
 
 ```json
 {
@@ -157,6 +142,20 @@ A segunda *policy* deve ter o seguinte conteúdo:
 }
 ```
 
+### AWS Glue
+
+No Glue precisaremos de um *database* e de um *crawler*. A criação do *database* é super simples, bastando informar um nome. Já a criação do *crawler* envolve alguns detalhes importantes:
+
+- Sua função será varrer o bucket S3 mostrado na seção anterior e mapear os metadados dos novos arquivos e tabelas. Assim, precisamos definir a fonte de dados para `s3://nome_do_seu_bucket/cnpj_db`.
+- As tabelas mapeadas devem ser associadas ao *database* criado aqui.
+- Não precisamos definir um *trigger* para o *crawler* porque ele será disparado sob demanda pela máquina de estados.
+- Precisamos usar uma *role* personalizada chamada `CNPJCrawlerRole`, que definiremos abaixo.
+
+Segundo a documentação, é recomendado que a `CNPJCrawlerRole` tenha 
+
+1. a *policy* gerenciada pela AWS `AWSGlueServiceRole`;
+2. uma *policy* com os acessos específicos da fonte de dados que ele irá acessar. Ou seja, a `CNPJBucketPolicy`.
+
 ### Lambdas
 
 O AWS Lambda é um serviço que tenta abstrair ao máximo a execução de uma função. [Esta documentação](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html) explica de forma resumida e completa o que é ele faz, como ele pode ser disparado, quais as suas capacidades, etc.
@@ -173,8 +172,6 @@ Cada bash script deve ser executado a partir da pasta onde está contido. Eles f
 2. Instala as dependências.
 3. Cria o arquivo .zip com o código da função e das dependências.
 
-Os arquivos zip devem ser subidos no console da AWS.
-
 Sobre as *roles*, a tabela abaixo mostra quais cada função deve assumir.
 
 | Nome          | Role             |
@@ -183,7 +180,7 @@ Sobre as *roles*, a tabela abaixo mostra quais cada função deve assumir.
 | fetch_data    | LambdaRoleWithS3 |
 | download_test | SimpleLambdaRole |
 
-A *role* `SimpleLambdaRole` é similar à criada automaticamente pelo console e tem o seguinte template: 
+A `SimpleLambdaRole` é similar à criada automaticamente pelo console e tem a seguinte *policy*: 
 
 ```json
 {
@@ -208,20 +205,7 @@ A *role* `SimpleLambdaRole` é similar à criada automaticamente pelo console e 
 }
 ```
 
-A *role* `LambdaRoleWithS3` usará a *policy* da `SimpleLambdaRole` e mais a *policy* definida abaixo:
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "s3:PutObject",
-            "Resource": "arn:aws:s3:::nome_do_seu_bucket/*"
-        }
-    ]
-}
-```
+A `LambdaRoleWithS3` usará a *policy* da `SimpleLambdaRole` e mais a `CNPJBucketPolicy`.
 
 #### check_update
 
@@ -229,12 +213,7 @@ Um exemplo de entrada e saída dessa função é encontrado nos passos 2 e 3 da 
 
 Ela faz um web scraping simples para extrair a data de alteração dos arquivos no [site da Receita Federal](https://dadosabertos.rfb.gov.br/CNPJ/). Analisando o código-fonte dele, percebe-se que é simplesmente uma tabela HTML. Portanto, utilizou-se o pacote `beautifulsoup` para tratar a tabela e varrer cada linha coletando os metadados necessários.
 
-Conforme descrito acima, o *deployment package* desta função deve ser construído e carregado na AWS. Na criação da lambda recomendo alterar as seguintes propriedades:
-
-- Timeout igual a 15s. As vezes a requisição ao site da RF demora.
-- Atualizar o nome do arquivo no Handler.
-
-![](references/handler_conf.png)
+Um ponto de atenção é que as vezes a requisição ao site da RF demora. Assim definimos um timeout de 15s.
 
 #### download_test
 
@@ -242,7 +221,7 @@ Um exemplo de entrada e saída desta função é encontrado nos passos 6 e 7 da 
 
 O que essa função faz especificamente é uma comparação de datas para verificar se devemos atualizar a tabela com os dados disponibilizados no site da RF. Como `$.GetPartitionsOutput.partitionValues` é um array, primeiro eu encontro o valor máximo da lista e só depois faço a comparação com o `$.ref_date`.
 
-Como esta função não tem dependências, não é necessário criar o *deployment package*. Após criar a lambda, o código pode ser simplesmente colado no editor de texto do console.
+Como esta função não tem dependências, não é necessário criar o *deployment package*.
 
 #### fetch_data
 
@@ -265,11 +244,8 @@ Em linhas gerais, a função faz o seguinte:
 4. O Parquet é enviado ao bucket S3 dentro da estrutura de "pastas" pré-definida para receber os arquivos das tabelas.
 5. Os arquivos temporários são deletados.
 
-Conforme descrito acima, o *deployment package* desta função deve ser construído e subido na AWS. Porém, no caso desta função, como o arquivo é maior que 50 Mb, não é possível subí-lo diretamente no console. Devemos carregá-lo no bucket criado anteriormente. 
+Devido ao tamanho dos arquivos manipulados, é necessário alterar as seguintes propriedades:
 
-Devido ao tamanho dos arquivos manipulados, na criação da lambda é necessário alterar as seguintes propriedades:
-
-- Atualizar o nome do arquivo no Handler.
 - Limite de memória RAM: 9000 MB.
 - Limite de armazenamento efêmero: 8000 MB.
 - Timeout: 8 min.
@@ -288,7 +264,7 @@ Requested quota: 10240 mb
 Use case: the function I'm building converts files from CSV to parquet. The problem is that some files are about 1 Gb in the disk, so that when I load them in the memory they go above the quota of 3008 Mb that I have at the moment.
 ```
 
-### Máquina de estados
+### Step Functions
 
 AWS Step Funcitions é um serviço da AWS para orquestrar chamadas de API em formato de uma máquina de estados. Podemos representar tal máquina como um grafo, conforme mostrado na seção desenho da solução ![desenho da solução](#desenho-da-solução). Os nós representam estados (*states*), que podem ser chamadas de API ou controladores do fluxo de execução, como o *Choice* ou o *Map*. As arestas indicam como será o fluxo de execução da máquina.
 
@@ -300,18 +276,9 @@ Cada etapa intermediária na caixa verde representa um filtro ou tratamento que 
 
 ![](references/choice_state.png)
 
-Usaremos 4 tipos de estados:
-
-- Invocação de lambdas.
-- Chamadas de API do AWS Glue para obter listas de tabelas e partições e disparar um Crawler.
-- *Choice state* para direcionar o fluxo da máquina de estados quando a tabela não existe ou a partição nova ainda não foi ingerida no S3.
-- *Map state* para rodar em paralelo a ingestão de cada tabela e o download de cada arquivo.
-
 A máquina de estados pode ser configurada de maneira visual pelo Workflow Studio ou em formato de texto usando a linguagem Amazon States Language (ASL). Ela é baseada em JSON e é fácil de entender. Entretanto, neste projeto eu usei o Studio e extraí o código ASL resultante, o qual está na pasta `state_machine`. Isso deixou a minha vida muito mais fácil porque usar o Studio economiza muitas consultas à documentação oficial. 
 
-Para usar o código aqui disponibilizado será necessário substituir os valores cercados por `||` pelo ARN ou nome do recurso correspondente (removendo os `||` também). Na criação da máquina no console basta selecionar a opção de criar a partir de código. Além disso, selecione o tipo *standard*.
-
-Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem a seguinte *policy*:
+Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem a seguinte *inline policy*:
 
 ```json
 {
@@ -344,27 +311,6 @@ Precisaremos de uma *role* personalizada chamada `CNPJStateMachineRole` que tem 
     ]
 }
 ```
-
-Por algum motivo ao criar a *role* não é possível adicionar *policies*. Mas depois de criada, você pode alterar as permissões e adicionar a *policy* especifica da máquina de estados.
-
-Após a configuração você já pode executar o ETL! O JSON de input da máquina será:
-
-```json
-{
-    "Tables": [
-        "empresas", "cnaes", "municipios", "motivos", "naturezas", "paises", "qualificacoes", "simples", "socios", "estabelecimentos"
-    ],
-    "BucketName": "nome_do_bucket"
-}
-```
-
-Se tudo foi configurado corretamente até aqui, na primeira execução as tabelas serão criadas e o fluxo será o da imagem abaixo:
-
-![](references/1exec.png)
-
-Nas próximas execuções, se não houver novos dados para ingerir, o fluxo será o da imagem abaixo:
-
-![](references/2exec.png)
 
 #### Descrição detalhada da máquina
 
@@ -620,16 +566,9 @@ Repare que no final do JSON um novo dicionário contendo as partições foi agre
 
 ### EventBridge Scheduler
 
-A criação do agendamento é bem fácil. Vá até o console e entre em Amazon EventBridge > Scheduler > Schedules > Create Schedule. Alguns pontos para se atentar:
+Com relação ao Scheduler, faremos um agendamento recorrente com disparo a cada 7 dias. Como a atualização dos dados não tem data fixa, precisamos verificar periodicamente se há novos dados. Além disso, como este projeto é para fins educacionais, não vale a pena configurar *retry*.
 
-- Selecionar um agendamento recorrente com disparo a cada 7 dias.
-- Não é necessário definir uma janela de tempo flexível.
-- No target selecione "StartExecution" do serviço AWS Step Functions.
-- Selecione a máquina de estados criada anteriormente e preencha o input.
-- Não é necessária política de *retry*. 
-- Deixe que o console crie uma *role* para o scheduler, mas redefina o seu nome para `CNPJSchedulerRole`.
-
-A *role* terá o seguinte formato:
+Para o Scheduler funcionar precisamos da `CNPJSchedulerRole`, que terá a *inline policy* abaixo:
 
 ```json
 {
@@ -648,10 +587,36 @@ A *role* terá o seguinte formato:
 }
 ```
 
-## Próximos passos
+## Implementação
 
-- Criar um template CloudFormation para instanciar os recursos automaticamente.
-- Criar testes unitários.
+> **Recomendo fortemente a leitura do template. Isso é essencial para entender como organizei a criação dos recursos na AWS.**
+
+Antes de começarmos, recomendo usar a região N. Virginia (us-east-1) pois é a mais barata e a latência neste projeto é irrelevante. A criação da infraestrutura será simples porque usaremos um template do CloudFormation. Além disso, os recursos criados nesse template ficam agrupados em uma *stack*, o que simplifica a manutenção.
+
+O primeiro passo é um pouco manual. É necessário construir o *deployment packages* das lambdas `check_update` e `fetch_data`, confome descrito na seção anterior. Os *zips* resultantes estarão na pasta `artifacts`. A função `download_test` não tem depedências e, portanto, não passa por essa parte. Seu código é passado diretamente no template do CloudFormation.
+
+Depois, precisamos subir os *deployment packages* e o *template* do CloudFormation `cnpj_infra_template.yml` em um *bucket* previamente criado. Isso pode ser feito pelo AWS CLI ou pelo *console*. Minha sugestão é criar na mão um *bucket* que seja reaproveitado em todos os seus projetos cuja finalidade é especificamente guardar artefatos necessários para a criação de infraestrutura via CloudFormation.  
+
+Após isso, basta criar uma *stack* pelo *console* ou pelo AWS CLI. Lembre-se de preencher os parâmetros. A definição deles está no começo do template. Após a criação da *stack* o ETL será executado automaticamente com o input abaixo:
+
+```json
+{
+    "Tables": [
+        "empresas", "cnaes", "municipios", "motivos", "naturezas", "paises", "qualificacoes", "simples", "socios", "estabelecimentos"
+    ],
+    "BucketName": "nome_do_bucket"
+}
+```
+
+Na primeira execução as tabelas serão criadas e o fluxo será o da imagem abaixo:
+
+![](references/1exec.png)
+
+Nas próximas execuções, se não houver novos dados para ingerir, o fluxo será o da imagem abaixo:
+
+![](references/2exec.png)
+
+Agora você já pode explorar os dados com o Athena ou Redshift ou criar visualizações com o QuickSight!
 
 ## Referências
 
