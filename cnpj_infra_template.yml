@@ -1,0 +1,363 @@
+# Cloudformation template ETL CNPJ
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: The name of the S3 bucket that stores data
+  CNPJDatabaseName:
+    Type: String
+    Description: The name of the Glue Data Catalog database
+  CrawlerName:
+    Type: String
+    Description: The name of the Glue Crawler
+  CodeBucketName:
+    Type: String
+    Description: The name of the S3 bucket containing lambda code
+  CheckUpdateCodeKey:
+    Type: String
+    Description: Object key of check_update's deployment package
+  FetchDataCodeKey:
+    Type: String
+    Description: Object key of fetch_data's deployment package
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+
+  CNPJBucketPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: CNPJBucketPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              - !Sub arn:aws:s3:::${BucketName}/cnpj_db*
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref CNPJDatabaseName
+
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Ref CrawlerName
+      Role: !GetAtt CNPJCrawlerRole.Arn
+      DatabaseName: !Ref CNPJDatabaseName
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://${BucketName}/cnpj_db
+
+  CNPJCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CNPJCrawlerRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+        - !Ref CNPJBucketPolicy
+
+  SimpleLambdaPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: SimpleLambdaPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+      
+  SimpleLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SimpleLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref SimpleLambdaPolicy
+
+  LambdaRoleWithS3:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaRoleWithS3
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref SimpleLambdaPolicy
+        - !Ref CNPJBucketPolicy
+
+  LambdaCheckUpdate:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: check_update
+      Handler: check_update.lambda_handler
+      PackageType: Zip
+      Role: !GetAtt SimpleLambdaRole.Arn
+      Runtime: python3.9
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref CodeBucketName
+        S3Key: !Ref CheckUpdateCodeKey
+  
+  LambdaDownloadTest:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: download_test
+      Role: !GetAtt SimpleLambdaRole.Arn
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import logging
+          import json
+          def lambda_handler(event, context):
+              last_partition = int(sorted(event['GetPartitionsOutput']['partitionValues'][0])[-1])
+              last_update = event['ref_date']
+              return {
+                  'statusCode': 200,
+                  'body': True if last_update > last_partition else False
+              }
+
+  LambdaFetchData:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: fetch_data
+      Handler: fetch_data.lambda_handler
+      PackageType: Zip
+      Role: !GetAtt LambdaRoleWithS3.Arn
+      Runtime: python3.9
+      Timeout: 480
+      EphemeralStorage:
+        Size: 8000
+      MemorySize: 9000
+      Code:
+        S3Bucket: !Ref CodeBucketName
+        S3Key: !Ref FetchDataCodeKey
+  
+  CNPJStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CNPJStateMachineRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: CNPJStateMachinePolicy
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt LambdaCheckUpdate.Arn 
+                  - !GetAtt LambdaDownloadTest.Arn
+                  - !GetAtt LambdaFetchData.Arn
+              - Effect: Allow
+                Action:
+                  - glue:GetTables
+                  - glue:GetPartitions
+                  - glue:StartCrawler
+                  - glue:GetTable
+                Resource:
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${CNPJDatabaseName}
+                  - !Sub arn:aws:glue:*:${AWS::AccountId}:catalog
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${CNPJDatabaseName}/*
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:crawler/${CrawlerName}
+  
+  CNPJStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties: 
+      StateMachineName: CNPJStateMachine
+      RoleArn: !GetAtt CNPJStateMachineRole.Arn
+      Definition:
+        Comment: Pipeline for data extration from CNPJ
+        StartAt: GetTables
+        States:
+          GetTables:
+            Type: Task
+            Next: GetCNPJDownloadInfo
+            Parameters:
+              DatabaseName: !Ref CNPJDatabaseName
+            Resource: arn:aws:states:::aws-sdk:glue:getTables
+            ResultPath: "$.DBOutput"
+          GetCNPJDownloadInfo:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              Payload.$: "$"
+              FunctionName: !GetAtt LambdaCheckUpdate.Arn 
+            OutputPath: "$.Payload.body"
+            Next: TableLoop
+          TableLoop:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: CheckIfTableExists
+              States:
+                CheckIfTableExists:
+                  Type: Choice
+                  Choices:
+                  - Variable: "$.exists"
+                    BooleanEquals: false
+                    Next: FileLoop
+                  Default: GetTablePartition
+                GetTablePartition:
+                  Type: Task
+                  Parameters:
+                    DatabaseName: !Ref CNPJDatabaseName
+                    TableName.$: "$.name"
+                  Resource: arn:aws:states:::aws-sdk:glue:getPartitions
+                  ResultSelector:
+                    partitionValues.$: "$.Partitions[*].Values"
+                  ResultPath: "$.GetPartitionsOutput"
+                  Next: CheckLastPartition
+                CheckLastPartition:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  Parameters:
+                    Payload.$: "$"
+                    FunctionName: !GetAtt LambdaDownloadTest.Arn 
+                  Next: DownloadTest
+                  ResultSelector:
+                    ShouldUpdateTable.$: "$.Payload.body"
+                  ResultPath: "$.CheckLastPartitionResult"
+                  Retry:
+                  - ErrorEquals:
+                    - States.TaskFailed
+                    BackoffRate: 2
+                    IntervalSeconds: 60
+                    MaxAttempts: 2
+                DownloadTest:
+                  Type: Choice
+                  Choices:
+                  - Variable: "$.CheckLastPartitionResult.ShouldUpdateTable"
+                    BooleanEquals: false
+                    Next: SuccessWithoutUpdate
+                  Default: FileLoop
+                SuccessWithoutUpdate:
+                  Type: Succeed
+                FileLoop:
+                  Type: Map
+                  ItemProcessor:
+                    ProcessorConfig:
+                      Mode: INLINE
+                    StartAt: Fetch file
+                    States:
+                      Fetch file:
+                        Type: Task
+                        Resource: arn:aws:states:::lambda:invoke
+                        Parameters:
+                          Payload.$: "$"
+                          FunctionName: !GetAtt LambdaFetchData.Arn
+                        End: true
+                        Retry:
+                        - ErrorEquals:
+                          - States.TaskFailed
+                          BackoffRate: 2
+                          IntervalSeconds: 60
+                          MaxAttempts: 2
+                  InputPath: "$"
+                  End: true
+                  ItemsPath: "$.files"
+            InputPath: "$"
+            Next: CNPJCrawler
+            ItemsPath: "$.Tables"
+          CNPJCrawler:
+            Type: Task
+            Parameters:
+              Name: !Ref CrawlerName
+            Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+            Next: SuccessWithUpdate
+          SuccessWithUpdate:
+            Type: Succeed
+
+  CNPJSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CNPJSchedulerRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: CNPJSchedulerPolicy
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: 
+                  - !Ref CNPJStateMachine
+
+  CNPJStateMachineScheduler:
+    Type: AWS::Scheduler::Schedule
+    Properties: 
+      Name: CNPJStateMachineScheduler
+      FlexibleTimeWindow: 
+        Mode: "OFF"
+      ScheduleExpression: rate(7 days)
+      State: ENABLED
+      Target:
+        Arn: !Ref CNPJStateMachine
+        RoleArn: !GetAtt CNPJSchedulerRole.Arn
+        Input: !Sub |
+          {
+              "Tables": [
+                  "empresas", "cnaes", "municipios", "motivos", "naturezas", 
+                  "paises", "qualificacoes", "simples", "socios", 
+                  "estabelecimentos"
+              ],
+              "BucketName": "${BucketName}"
+          }
